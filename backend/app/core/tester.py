@@ -5,6 +5,7 @@ import random
 import re
 import string
 import threading
+import base64
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Callable, Optional, Any
 import json
@@ -131,6 +132,9 @@ class APITester:
             value = re.sub(r'\{\{([^}]+)\}\}', dynamic_replacer, value)
             return value
         if isinstance(value, dict):
+            # Don't template embedded file fields (binary base64, not text).
+            if value.get("__file__"):
+                return value
             return {k: self._substitute(v) for k, v in value.items()}
         if isinstance(value, list):
             return [self._substitute(item) for item in value]
@@ -245,10 +249,17 @@ class APITester:
             if ptype == "form":
                 resp = self.session.request(self.test.method, url, headers=headers, data=payload, timeout=10)
             elif ptype == "multipart":
-                # Force multipart/form-data (useful for file-like or strict servers)
+                # multipart/form-data — text fields + real file fields (base64-embedded)
                 files = {}
                 for k, v in (payload or {}).items():
-                    files[k] = (None, str(v))
+                    if isinstance(v, dict) and v.get("__file__"):
+                        try:
+                            content = base64.b64decode(v.get("data", "") or "")
+                        except Exception:
+                            content = b""
+                        files[k] = (v.get("name") or "file", content, v.get("type") or "application/octet-stream")
+                    else:
+                        files[k] = (None, str(v))
                 # remove any content-type so requests sets correct multipart boundary
                 headers = {k: v for k, v in headers.items() if k.lower() != "content-type"}
                 resp = self.session.request(self.test.method, url, headers=headers, files=files, timeout=10)

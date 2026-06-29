@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import { KVEditor } from './KVEditor'
+import { MultipartEditor } from './MultipartEditor'
 import { Textarea } from './ui/textarea'
 import { Button } from './ui/button'
 
 interface Props {
   value: Record<string, any>
   onChange: (v: Record<string, any>) => void
+  payloadType?: string
 }
 
 type Mode = 'fields' | 'json'
@@ -22,10 +24,15 @@ const PLACEHOLDER = `{
  *  - JSON: paste / edit raw JSON — handles nested objects & arrays
  * The two stay in sync; JSON is parsed live and only pushed up when valid.
  */
-export function PayloadEditor({ value, onChange }: Props) {
+export function PayloadEditor({ value, onChange, payloadType }: Props) {
   const [mode, setMode] = useState<Mode>('fields')
   const [jsonText, setJsonText] = useState('')
   const [error, setError] = useState<string | null>(null)
+
+  // multipart/form-data: per-field text or file (Postman-style)
+  if (payloadType === 'multipart') {
+    return <MultipartEditor value={value} onChange={onChange} />
+  }
 
   const toJson = () => {
     setJsonText(JSON.stringify(value ?? {}, null, 2))

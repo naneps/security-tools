@@ -298,7 +298,7 @@ export default function EndpointEditor({ testId, config, currentProjectName, cur
                 <CardTitle className="text-sm">Payload / Body</CardTitle>
               </CardHeader>
               <CardContent>
-                <PayloadEditor value={form.payload || {}} onChange={(p) => handleChange('payload', p)} />
+                <PayloadEditor value={form.payload || {}} onChange={(p) => handleChange('payload', p)} payloadType={form.payload_type} />
                 <div className="text-[10px] text-amber-400 mt-2">
                   Dynamic: {'{{random_string}}'} {'{{random_email}}'} {'{{random_phone}}'} • use {'{{var}}'} from env
                 </div>
