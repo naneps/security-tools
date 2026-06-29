@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from './ui/card'
 import { Label } from './ui/label'
 import { Textarea } from './ui/textarea'
 import { KVEditor } from './KVEditor'
+import { PayloadEditor } from './PayloadEditor'
 import { toast } from './ui/toast'
 import { TestConfig } from '../types'
 
@@ -297,7 +298,7 @@ export default function EndpointEditor({ testId, config, currentProjectName, cur
                 <CardTitle className="text-sm">Payload / Body</CardTitle>
               </CardHeader>
               <CardContent>
-                <KVEditor data={form.payload || {}} onChange={(p) => handleChange('payload', p)} />
+                <PayloadEditor value={form.payload || {}} onChange={(p) => handleChange('payload', p)} />
                 <div className="text-[10px] text-amber-400 mt-2">
                   Dynamic: {'{{random_string}}'} {'{{random_email}}'} {'{{random_phone}}'} • use {'{{var}}'} from env
                 </div>

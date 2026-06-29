@@ -294,7 +294,7 @@ function App() {
 
       {/* Dialogs */}
       <ProjectDialog open={showProjectDialog} onOpenChange={setShowProjectDialog} onCreate={createProject} />
-      <EnvironmentsDialog open={showEnvDialog} onOpenChange={setShowEnvDialog} project={currentProject} onSave={saveEnvironments} />
+      <EnvironmentsDialog open={showEnvDialog} onOpenChange={setShowEnvDialog} project={currentProject} activeEnvId={currentProject?.current_environment_id} onSave={saveEnvironments} />
       <GlobalVarsDialog open={showGlobalDialog} onOpenChange={setShowGlobalDialog} initial={globalVariables} onSave={saveGlobal} />
       <ProjectSettingsDialog open={showProjectSettings} onOpenChange={setShowProjectSettings} project={currentProject} onRename={renameProject} onDelete={deleteProject} />
     </div>
