@@ -1,8 +1,0 @@
-{
-  "base_url": "https://api.retailku.com",
-  "variables": {
-    "access_token": "",
-    "refresh_token": ""
-  },
-  "tests": []
-}

@@ -1,176 +1,305 @@
-import React, { useState, useEffect } from 'react'
-import { Button } from './components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from './components/ui/card'
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './components/ui/table'
-import { Badge } from './components/ui/badge'
-import { Endpoint, TestConfig } from './types'
-import EndpointEditor from './components/EndpointEditor'
+import { useState, useEffect } from 'react'
+import { TestConfig, Project, Endpoint, RunConfig } from './types'
+import { Sidebar } from './components/Sidebar'
+import { Header } from './components/Header'
+import { EndpointTable } from './components/EndpointTable'
+import { ExecutionControls, ExecSettings, DEFAULT_SETTINGS, settingsToConfig, configToSettings } from './components/ExecutionControls'
 import LiveMonitor from './components/LiveMonitor'
-import { ThemeToggle } from './components/ThemeToggle'
+import EndpointEditor from './components/EndpointEditor'
+import { ProjectDialog } from './components/dialogs/ProjectDialog'
+import { EnvironmentsDialog } from './components/dialogs/EnvironmentsDialog'
+import { GlobalVarsDialog } from './components/dialogs/GlobalVarsDialog'
+import { ProjectSettingsDialog } from './components/dialogs/ProjectSettingsDialog'
+import { useRun } from './hooks/useRun'
+import { api } from './lib/api'
+import { toast } from './components/ui/toast'
+
+function loadGlobalSettings(): ExecSettings {
+  try {
+    const raw = localStorage.getItem('exec_settings')
+    if (raw) return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) }
+  } catch {
+    /* ignore */
+  }
+  return DEFAULT_SETTINGS
+}
 
 function App() {
   const [config, setConfig] = useState<TestConfig>({ base_url: '', variables: {}, tests: [] })
+  const [projects, setProjects] = useState<Project[]>([])
+  const [currentProjectId, setCurrentProjectId] = useState('')
+  const [globalVariables, setGlobalVariables] = useState<Record<string, string>>({})
+
   const [showEditor, setShowEditor] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
-  const [runLogs, setRunLogs] = useState<string[]>([])
 
-  useEffect(() => {
-    fetchConfig()
-  }, [])
+  const [showProjectDialog, setShowProjectDialog] = useState(false)
+  const [showEnvDialog, setShowEnvDialog] = useState(false)
+  const [showGlobalDialog, setShowGlobalDialog] = useState(false)
+  const [showProjectSettings, setShowProjectSettings] = useState(false)
 
-  const fetchConfig = async () => {
-    const res = await fetch('/config')
-    const data = await res.json()
-    setConfig(data)
+  // Execution settings: a global default (persisted) + an active view that may
+  // be a per-endpoint override.
+  const [globalSettings, setGlobalSettings] = useState<ExecSettings>(loadGlobalSettings)
+  const [settings, setSettings] = useState<ExecSettings>(globalSettings)
+  const [overrideEnabled, setOverrideEnabled] = useState(false)
+  const [selectedTestId, setSelectedTestId] = useState<string | null>(null)
+
+  const run = useRun()
+
+  const currentProject = projects.find((p) => p.id === currentProjectId)
+  const currentEnv = currentProject?.environments?.find((e) => e.id === currentProject?.current_environment_id)
+  const selectedName = config.tests.find((t) => t.id === selectedTestId)?.name
+
+  useEffect(() => { fetchAll() }, [])
+
+  // ---- Data loading -----------------------------------------------------
+  const fetchAll = async () => {
+    try {
+      const data = await api.listProjects()
+      setProjects(data.projects || [])
+      setCurrentProjectId(data.current_project_id || '')
+      setGlobalVariables(data.global_variables || {})
+    } catch {
+      setProjects([{ id: 'default', name: 'Default Project', environments: [], current_environment_id: '' } as any])
+      setCurrentProjectId('default')
+    }
+    try { setConfig(await api.getConfig()) } catch {}
+  }
+  const fetchConfig = async () => { try { setConfig(await api.getConfig()) } catch {} }
+
+  // ---- Projects / environments -----------------------------------------
+  const switchProject = async (id: string) => {
+    if (id === currentProjectId) return
+    if (showEditor) { setShowEditor(false); setEditingId(null) }
+    setSelectedTestId(null)
+    try {
+      const data: any = await api.switchProject(id)
+      if (data?.config) setConfig(data.config)
+    } catch {}
+    setCurrentProjectId(id)
+    await fetchAll()
   }
 
-  const openNewEditor = () => {
-    setEditingId(null)
-    setShowEditor(true)
+  const switchEnv = async (envId: string) => {
+    if (!currentProjectId) return
+    try {
+      const data: any = await api.switchEnvironment(currentProjectId, envId)
+      if (data?.config) setConfig(data.config)
+    } catch {}
+    await fetchAll()
   }
 
-  const openEdit = (id: string) => {
-    setEditingId(id)
-    setShowEditor(true)
+  const createProject = async (name: string, base: string) => {
+    try {
+      const p = await api.createProject(name, base || undefined)
+      setShowProjectDialog(false)
+      await switchProject(p.id)
+      toast.success('Project created')
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to create project')
+    }
   }
 
-  const closeEditor = () => {
-    setShowEditor(false)
-    fetchConfig()
+  const renameProject = async (name: string) => {
+    if (!currentProjectId || !name) return
+    try {
+      await api.renameProject(currentProjectId, name)
+      toast.success('Project renamed')
+      setShowProjectSettings(false)
+      await fetchAll()
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to rename project')
+    }
   }
 
-  const handleRun = async (testId: string) => {
-    setRunLogs([`Starting run for ${testId}...`])
-    const res = await fetch('/run', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        test_id: testId, 
-        concurrency: 4, 
-        max_requests: 50,
-        delay: 0.1 
-      })
-    })
-    const { run_id } = await res.json()
-    
-    // Simple polling for demo
-    const interval = setInterval(async () => {
-      const statusRes = await fetch(`/status/${run_id}`)
-      const status = await statusRes.json()
-      
-      if (status.logs) {
-        setRunLogs(status.logs)
+  const deleteProject = async () => {
+    if (!currentProject) return
+    if (!window.confirm(`Delete project "${currentProject.name}" and all its endpoints?`)) return
+    try {
+      await api.deleteProject(currentProjectId)
+      toast.success('Project deleted')
+      setShowProjectSettings(false)
+      setSelectedTestId(null)
+      await fetchAll()
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to delete project')
+    }
+  }
+
+  const saveEnvironments = async (envs: any[]) => {
+    if (!currentProjectId) { setShowEnvDialog(false); return }
+    try {
+      await api.updateEnvironments(currentProjectId, envs)
+      if (envs.length) {
+        try { await api.switchEnvironment(currentProjectId, envs[envs.length - 1].id) } catch {}
       }
-      
-      if (status.status !== 'running') {
-        clearInterval(interval)
-        setRunLogs(prev => [...prev, `Run finished: ${status.status}`])
-      }
-    }, 800)
+      toast.success('Environments saved')
+      await fetchAll()
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to save environments')
+    }
+    setShowEnvDialog(false)
+  }
+
+  const saveGlobal = async (vars: Record<string, string>) => {
+    try {
+      await api.saveGlobal(vars)
+      toast.success('Global variables saved')
+      await fetchAll()
+    } catch {
+      setGlobalVariables(vars)
+    }
+    setShowGlobalDialog(false)
+  }
+
+  // ---- Endpoints --------------------------------------------------------
+  const openNewEditor = () => { setEditingId(null); setShowEditor(true) }
+  const openEdit = (id: string) => { setEditingId(id); setShowEditor(true) }
+  const closeEditor = () => { setShowEditor(false); fetchAll() }
+
+  const duplicateEndpoint = async (id: string) => {
+    try { await api.duplicateTest(id); toast.success('Endpoint duplicated'); await fetchAll() }
+    catch (e: any) { toast.error(e?.message || 'Failed to duplicate') }
+  }
+
+  const deleteEndpoint = async (id: string, name: string) => {
+    if (!window.confirm(`Delete endpoint "${name}"? This cannot be undone.`)) return
+    try {
+      await api.deleteTest(id)
+      toast.success('Endpoint deleted')
+      if (selectedTestId === id) setSelectedTestId(null)
+      await fetchAll()
+    } catch (e: any) { toast.error(e?.message || 'Failed to delete') }
+  }
+
+  // ---- Execution settings ----------------------------------------------
+  const selectEndpoint = (id: string) => {
+    setSelectedTestId(id)
+    const ep = config.tests.find((t) => t.id === id)
+    if (ep?.run_config) {
+      setOverrideEnabled(true)
+      setSettings(configToSettings(ep.run_config))
+    } else {
+      setOverrideEnabled(false)
+      setSettings(globalSettings)
+    }
+  }
+
+  const onSettingsChange = (s: ExecSettings) => {
+    setSettings(s)
+    if (!overrideEnabled) {
+      setGlobalSettings(s)
+      try { localStorage.setItem('exec_settings', JSON.stringify(s)) } catch {}
+    }
+  }
+
+  const onToggleOverride = (on: boolean) => {
+    setOverrideEnabled(on)
+    if (!on) setSettings(globalSettings)
+  }
+
+  // Persist (or clear) a per-endpoint override before running.
+  const persistOverride = async (ep: Endpoint, cfg: RunConfig) => {
+    const target = overrideEnabled ? cfg : null
+    if (JSON.stringify(ep.run_config ?? null) === JSON.stringify(target)) return
+    try {
+      await api.updateTest(ep.id, { ...ep, run_config: target })
+      await fetchConfig()
+    } catch {}
+  }
+
+  const runSelected = async () => {
+    if (!selectedTestId) { toast.error('Select an endpoint first'); return }
+    const ep = config.tests.find((t) => t.id === selectedTestId)
+    if (!ep) return
+    const cfg = settingsToConfig(settings)
+    await persistOverride(ep, cfg)
+    run.start(ep.id, ep.name, cfg)
+  }
+
+  const runRow = (id: string) => {
+    const ep = config.tests.find((t) => t.id === id)
+    if (!ep) return
+    selectEndpoint(id)
+    const cfg = ep.run_config ? ep.run_config : settingsToConfig(globalSettings)
+    run.start(ep.id, ep.name, cfg)
   }
 
   return (
     <div className="flex h-screen bg-background text-foreground">
-      {/* Sidebar */}
-      <div className="w-64 bg-card border-r border-border p-6 flex flex-col">
-        <div className="mb-10">
-          <div className="flex items-center gap-2">
-            <div className="h-8 w-8 rounded bg-indigo-600" />
-            <h1 className="text-2xl font-bold">Security Tools</h1>
-          </div>
-          <p className="text-sm text-muted-foreground mt-1">Dynamic API Tester</p>
-        </div>
+      <Sidebar
+        projects={projects}
+        currentProjectId={currentProjectId}
+        currentProject={currentProject}
+        config={config}
+        onSwitchProject={switchProject}
+        onNewProject={() => setShowProjectDialog(true)}
+        onSwitchEnv={switchEnv}
+        onManageEnv={() => setShowEnvDialog(true)}
+        onGlobalVars={() => setShowGlobalDialog(true)}
+        onNewEndpoint={openNewEditor}
+      />
 
-        <Button onClick={openNewEditor} className="w-full mb-4">
-          + New Endpoint
-        </Button>
-
-        <div className="space-y-1 text-sm">
-          <div className="px-3 py-2 text-muted-foreground">Endpoints</div>
-          <div className="px-3 py-1.5 rounded bg-secondary text-secondary-foreground text-sm">All ({config.tests.length})</div>
-        </div>
-
-        <div className="mt-auto pt-8 text-xs text-muted-foreground border-t border-border">
-          React + shadcn/ui + FastAPI
-        </div>
-      </div>
-
-      {/* Main Content */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        <div className="border-b border-border px-6 py-4 flex items-center justify-between bg-background">
-          <div>
-            <h2 className="font-semibold text-xl">Dashboard</h2>
-            <p className="text-xs text-muted-foreground">Test and brute force your APIs with dynamic payloads</p>
-          </div>
-          <div className="flex items-center gap-3">
-            <Badge variant="outline">Config: {config.base_url || 'not set'}</Badge>
-            <ThemeToggle />
-          </div>
-        </div>
+        <Header currentProject={currentProject} onProjectSettings={() => setShowProjectSettings(true)} />
 
-        <div className="flex-1 overflow-auto p-6 space-y-6">
+        <div className={`flex-1 overflow-auto ${showEditor ? 'p-1 pb-4' : 'p-4 space-y-4'}`}>
           {showEditor ? (
-            <EndpointEditor 
-              testId={editingId} 
-              config={config} 
+            <EndpointEditor
+              testId={editingId}
+              config={config}
+              currentProjectName={currentProject?.name}
+              currentEnvName={currentEnv?.name}
               onClose={closeEditor}
-              onSave={fetchConfig}
+              onSave={fetchAll}
             />
           ) : (
             <>
-              {/* Endpoints */}
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between">
-                  <CardTitle>Endpoints</CardTitle>
-                  <Button size="sm" onClick={openNewEditor}>New Endpoint</Button>
-                </CardHeader>
-                <CardContent>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Name</TableHead>
-                        <TableHead>Method</TableHead>
-                        <TableHead>URL</TableHead>
-                        <TableHead className="text-right pr-4">Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {config.tests.length === 0 && (
-                        <TableRow>
-                          <TableCell colSpan={4} className="text-center py-10 text-muted-foreground">
-                            No endpoints. Click "New Endpoint" to start.
-                          </TableCell>
-                        </TableRow>
-                      )}
-                      {config.tests.map((test: any) => (
-                        <TableRow key={test.id}>
-                          <TableCell className="font-medium">{test.name}</TableCell>
-                          <TableCell>
-                            <Badge variant="secondary" className="font-mono text-xs">{test.method}</Badge>
-                          </TableCell>
-                          <TableCell className="font-mono text-xs text-muted-foreground truncate max-w-[280px]">{test.url}</TableCell>
-                          <TableCell className="text-right">
-                            <div className="flex justify-end gap-2">
-                              <Button size="sm" variant="outline" onClick={() => handleRun(test.id)}>
-                                Run
-                              </Button>
-                              <Button size="sm" onClick={() => openEdit(test.id)}>
-                                Edit
-                              </Button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </CardContent>
-              </Card>
+              <ExecutionControls
+                settings={settings}
+                onChange={onSettingsChange}
+                status={run.status}
+                selectedName={selectedName}
+                hasSelection={!!selectedTestId}
+                overrideEnabled={overrideEnabled}
+                onToggleOverride={onToggleOverride}
+                onRun={runSelected}
+                onStop={run.stop}
+              />
 
-              <LiveMonitor logs={runLogs} />
+              <EndpointTable
+                tests={config.tests as Endpoint[]}
+                selectedId={selectedTestId}
+                runningTestId={run.runningTestId}
+                runStatus={run.status}
+                onSelect={selectEndpoint}
+                onNew={openNewEditor}
+                onEdit={openEdit}
+                onDuplicate={duplicateEndpoint}
+                onDelete={deleteEndpoint}
+                onRunRow={runRow}
+              />
+
+              <LiveMonitor
+                logs={run.logs}
+                stats={run.stats}
+                status={run.status}
+                maxRequests={run.maxRequests}
+                runningName={config.tests.find((t) => t.id === run.runningTestId)?.name}
+                onStop={run.stop}
+                onClear={run.clear}
+              />
             </>
           )}
         </div>
       </div>
+
+      {/* Dialogs */}
+      <ProjectDialog open={showProjectDialog} onOpenChange={setShowProjectDialog} onCreate={createProject} />
+      <EnvironmentsDialog open={showEnvDialog} onOpenChange={setShowEnvDialog} project={currentProject} onSave={saveEnvironments} />
+      <GlobalVarsDialog open={showGlobalDialog} onOpenChange={setShowGlobalDialog} initial={globalVariables} onSave={saveGlobal} />
+      <ProjectSettingsDialog open={showProjectSettings} onOpenChange={setShowProjectSettings} project={currentProject} onRename={renameProject} onDelete={deleteProject} />
     </div>
   )
 }

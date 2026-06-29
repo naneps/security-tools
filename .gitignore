@@ -31,6 +31,10 @@ ENV/
 # Keep it local; commit config/tests.example.json instead.
 config/tests.json
 config/*.local.json
+
+# Backend (FastAPI) also stores operational state relative to its cwd
+backend/config/tests.json
+backend/config/*.local.json
 *.log
 results/
 
@@ -38,13 +42,16 @@ results/
 otp_progress.txt
 config.json
 
-# IDE
+# IDE / tooling
 .vscode/
 .idea/
 *.swp
 *.swo
+.grok/
 
 # OS
 .DS_Store
 Thumbs.db
-node_modules/
+
+# Dependencies
+**/node_modules/

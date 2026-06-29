@@ -11,7 +11,7 @@ import json
 class EndpointTest:
     def __init__(self, test_id: str, name: str, url: str, method: str = "POST",
                  headers: Dict = None, payload: Dict = None, payload_type: str = "json",
-                 extractors: Dict = None):
+                 extractors: Dict = None, run_config: Dict = None):
         self.id = test_id or str(uuid.uuid4())
         self.name = name
         self.url = url
@@ -20,6 +20,8 @@ class EndpointTest:
         self.payload = payload or {}
         self.payload_type = payload_type  # "json", "form", "multipart"
         self.extractors = extractors or {}  # e.g. {"access_token": "body.access_token"}
+        # Optional per-endpoint run override: {concurrency, max_requests, delay, use_min_delay}
+        self.run_config = run_config or None
 
     def to_dict(self):
         return {
@@ -30,7 +32,8 @@ class EndpointTest:
             "headers": self.headers,
             "payload": self.payload,
             "payload_type": self.payload_type,
-            "extractors": self.extractors
+            "extractors": self.extractors,
+            "run_config": self.run_config
         }
 
     @staticmethod
@@ -38,7 +41,7 @@ class EndpointTest:
         return EndpointTest(
             d.get("id"), d["name"], d["url"], d.get("method", "POST"),
             d.get("headers", {}), d.get("payload", {}), d.get("payload_type", "json"),
-            d.get("extractors", {})
+            d.get("extractors", {}), d.get("run_config")
         )
 
 class TestConfig:

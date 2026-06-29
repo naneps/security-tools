@@ -1,3 +1,10 @@
+export interface RunConfig {
+  concurrency: number
+  max_requests: number
+  delay: number // seconds
+  use_min_delay: boolean
+}
+
 export interface Endpoint {
   id: string
   name: string
@@ -7,12 +14,34 @@ export interface Endpoint {
   payload: Record<string, any>
   payload_type: string
   extractors?: Record<string, string>
+  run_config?: RunConfig | null
 }
 
 export interface TestConfig {
   base_url: string
   variables: Record<string, string>
   tests: Endpoint[]
+}
+
+export interface Environment {
+  id: string
+  name: string
+  base_url: string
+  variables: Record<string, string>
+}
+
+export interface Project {
+  id: string
+  name: string
+  environments: Environment[]
+  current_environment_id?: string
+  tests: any[]  // reuse Endpoint[]
+}
+
+export interface AppData {
+  current_project_id: string
+  projects: Project[]
+  global_variables: Record<string, string>
 }
 
 export interface RunStatus {
