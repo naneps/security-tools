@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
-import { TestConfig, Project, Endpoint, RunConfig } from './types'
+import { TestConfig, Project, Endpoint, RunConfig, CollectionItem } from './types'
+import { flattenItems, collectRequestsUnderFolder } from './lib/utils'
 import { Sidebar } from './components/Sidebar'
 import { Header } from './components/Header'
 import { EndpointTable } from './components/EndpointTable'
@@ -28,7 +29,9 @@ function loadGlobalSettings(): ExecSettings {
 
 function App() {
   const [view, setView] = useState<'landing' | 'app'>(() => {
-    const isDesktop = !!(window as any).__TAURI__ || !!(window as any).process?.versions?.electron
+    const isTauri = !!(window as any).__TAURI_INTERNALS__ || !!(window as any).__TAURI__
+    const isElectron = !!(window as any).process?.versions?.electron
+    const isDesktop = isTauri || isElectron
     const hasAppHash = window.location.hash === '#app' || window.location.hash === '#/app'
     return (isDesktop || hasAppHash) ? 'app' : 'landing'
   })
@@ -77,7 +80,39 @@ function App() {
 
   const currentProject = projects.find((p) => p.id === currentProjectId)
   const currentEnv = currentProject?.environments?.find((e) => e.id === currentProject?.current_environment_id)
-  const selectedName = config.tests.find((t) => t.id === selectedTestId)?.name
+  const projectItems: CollectionItem[] = currentProject?.items || []
+  const effectiveTests = flattenItems(projectItems).length ? flattenItems(projectItems) : (config.tests as Endpoint[])
+  const selectedName = effectiveTests.find((t) => t.id === selectedTestId)?.name || (config.tests as any[]).find((t) => t.id === selectedTestId)?.name
+
+  // Auto-start backend sidecar in desktop (Tauri)
+  // This makes the single EXE automatically start the local backend
+  useEffect(() => {
+    const isTauri = !!(window as any).__TAURI_INTERNALS__ || !!(window as any).__TAURI__
+    if (!isTauri) return
+
+    let child: any = null
+
+    const startBackend = async () => {
+      try {
+        const { Command } = await import('@tauri-apps/plugin-shell')
+        // "backend" is the sidecar name registered in tauri.conf.json externalBin
+        child = await Command.create('backend').spawn()
+        console.log('[Desktop] Backend sidecar started automatically')
+      } catch (e) {
+        console.error('[Desktop] Failed to start backend sidecar', e)
+        // Don't block the UI; user can start backend manually if sidecar not present
+      }
+    }
+
+    startBackend()
+
+    // Best effort cleanup when the React app unmounts (e.g. window close)
+    return () => {
+      if (child) {
+        child.kill().catch(() => {})
+      }
+    }
+  }, [])
 
   useEffect(() => { fetchAll() }, [])
 
@@ -127,6 +162,43 @@ function App() {
     } catch (e: any) {
       toast.error(e?.message || 'Failed to create project')
     }
+  }
+
+  const createFolder = async () => {
+    if (!currentProjectId) return
+    const folderName = window.prompt('New folder name', 'New Folder')
+    if (!folderName) return
+    const newFolder: any = {
+      id: (crypto as any).randomUUID ? (crypto as any).randomUUID() : 'f-' + Date.now(),
+      name: folderName,
+      type: 'folder',
+      items: [],
+    }
+    const currentItems = currentProject?.items || []
+    const newItems = [...currentItems, newFolder]
+    try {
+      await api.updateProjectItems(currentProjectId, newItems)
+      await fetchAll()
+      toast.success('Folder created')
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to create folder')
+    }
+  }
+
+  const runFolder = (folderId: string) => {
+    const tests = collectRequestsUnderFolder(projectItems, folderId)
+    if (!tests.length) {
+      toast.error('No endpoints in this folder')
+      return
+    }
+    if (!window.confirm(`Run ${tests.length} endpoints in this folder?`)) return
+    run.startAll(
+      tests.map((ep) => ({
+        testId: ep.id,
+        name: ep.name,
+        cfg: ep.run_config ?? settingsToConfig(globalSettings),
+      })),
+    )
   }
 
   const renameProject = async (name: string) => {
@@ -228,7 +300,7 @@ function App() {
   // ---- Execution settings ----------------------------------------------
   const selectEndpoint = (id: string) => {
     setSelectedTestId(id)
-    const ep = config.tests.find((t) => t.id === id)
+    const ep = effectiveTests.find((t) => t.id === id) || (config.tests as any[]).find((t) => t.id === id)
     if (ep?.run_config) {
       setOverrideEnabled(true)
       setSettings(configToSettings(ep.run_config))
@@ -263,7 +335,7 @@ function App() {
 
   const runSelected = async () => {
     if (!selectedTestId) { toast.error('Select an endpoint first'); return }
-    const ep = config.tests.find((t) => t.id === selectedTestId)
+    const ep = effectiveTests.find((t) => t.id === selectedTestId) || (config.tests as any[]).find((t) => t.id === selectedTestId)
     if (!ep) return
     const cfg = settingsToConfig(settings)
     await persistOverride(ep, cfg)
@@ -271,7 +343,7 @@ function App() {
   }
 
   const runRow = (id: string) => {
-    const ep = config.tests.find((t) => t.id === id)
+    const ep = effectiveTests.find((t) => t.id === id) || (config.tests as any[]).find((t) => t.id === id)
     if (!ep) return
     selectEndpoint(id)
     const cfg = ep.run_config ? ep.run_config : settingsToConfig(globalSettings)
@@ -279,7 +351,7 @@ function App() {
   }
 
   const runAll = () => {
-    const tests = config.tests as Endpoint[]
+    const tests = effectiveTests
     if (!tests.length) {
       toast.error('No endpoints to run')
       return
@@ -345,7 +417,7 @@ function App() {
                 status={run.status}
                 selectedName={selectedName}
                 hasSelection={!!selectedTestId}
-                endpointCount={config.tests.length}
+                endpointCount={effectiveTests.length}
                 overrideEnabled={overrideEnabled}
                 onToggleOverride={onToggleOverride}
                 onRun={runSelected}
@@ -354,16 +426,20 @@ function App() {
               />
 
               <EndpointTable
-                tests={config.tests as Endpoint[]}
+                tests={effectiveTests}
+                items={projectItems}
                 selectedId={selectedTestId}
                 runningTestId={run.runningTestId}
                 runStatus={run.status}
                 onSelect={selectEndpoint}
                 onNew={openNewEditor}
+                onNewFolder={createFolder}
                 onEdit={openEdit}
                 onDuplicate={duplicateEndpoint}
                 onDelete={deleteEndpoint}
                 onRunRow={runRow}
+                onRunFolder={runFolder}
+                onRunAll={runAll}
               />
 
               <LiveMonitor
@@ -373,7 +449,7 @@ function App() {
                 status={run.status}
                 maxRequests={run.runQueue ? run.totalMaxRequests : run.maxRequests}
                 runQueue={run.runQueue}
-                runningName={config.tests.find((t) => t.id === run.runningTestId)?.name}
+                runningName={effectiveTests.find((t) => t.id === run.runningTestId)?.name || (config.tests as any[]).find((t) => t.id === run.runningTestId)?.name}
                 onStop={run.stop}
                 onClear={run.clear}
               />

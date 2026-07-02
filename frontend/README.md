@@ -26,7 +26,7 @@ npx shadcn@latest add button card input table select textarea
 npm run dev
 ```
 
-The app connects to the FastAPI backend on port 8000.
+The app connects to the FastAPI backend on port 8001.
 
 ## Key pages
 

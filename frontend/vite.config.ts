@@ -10,8 +10,11 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  // Tauri expects a fixed port in dev
   server: {
     port: 5173,
+    strictPort: true,
+    host: '0.0.0.0',
     proxy: {
       '/config': {
         target: 'http://127.0.0.1:8000',

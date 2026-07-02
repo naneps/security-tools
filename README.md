@@ -37,7 +37,7 @@ start-dev.bat
 ```
 
 This starts:
-- **Backend**  → http://localhost:8000 (FastAPI)  — now with colored startup banner [BACKEND]
+- **Backend**  → http://localhost:8001 (FastAPI)  — now with colored startup banner [BACKEND]
 - **Frontend** → http://localhost:5173 (React + shadcn/ui)
 
 Terminal output uses colored prefixes like:
@@ -59,7 +59,7 @@ pnpm run dev:frontend   # start only frontend
 # Backend
 cd backend
 pip install -r requirements.txt
-python -m uvicorn app.main:app --reload --port 8000
+python -m uvicorn app.main:app --reload --port 8001
 
 # Frontend (new terminal)
 cd frontend
